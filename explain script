@@ -1,0 +1,10 @@
+Explanation:
+Connection details: Specify your SQL Server connection information such as the server name, database name, username, and password.
+File Path: Define the path to the pipe-delimited text file you want to import.
+Import-Csv: This cmdlet is used to read the pipe-delimited file and parse it into objects.
+SQL Insert: We dynamically build an INSERT INTO SQL query using the column names from the file and their corresponding values.
+Invoke-Sqlcmd: This cmdlet is used to execute the SQL query for inserting data into SQL Server.
+Notes:
+Make sure you replace your_sql_server, your_database, your_username, your_password, and your_table with actual values.
+Ensure that SQLPS module is installed for Invoke-Sqlcmd. If it's not installed, you can install it using Install-Module -Name SqlServer in PowerShell.
+The script assumes that the SQL table already exists and has the correct schema. If necessary, modify the script to match the file's structure to the table's columns
