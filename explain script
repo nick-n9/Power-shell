@@ -1,10 +1,54 @@
-Explanation:
-Connection details: Specify your SQL Server connection information such as the server name, database name, username, and password.
-File Path: Define the path to the pipe-delimited text file you want to import.
-Import-Csv: This cmdlet is used to read the pipe-delimited file and parse it into objects.
-SQL Insert: We dynamically build an INSERT INTO SQL query using the column names from the file and their corresponding values.
-Invoke-Sqlcmd: This cmdlet is used to execute the SQL query for inserting data into SQL Server.
-Notes:
-Make sure you replace your_sql_server, your_database, your_username, your_password, and your_table with actual values.
-Ensure that SQLPS module is installed for Invoke-Sqlcmd. If it's not installed, you can install it using Install-Module -Name SqlServer in PowerShell.
-The script assumes that the SQL table already exists and has the correct schema. If necessary, modify the script to match the file's structure to the table's columns
+Sub RefreshForecast()
+    Dim ws As Worksheet
+    Dim conn As Object
+    Dim rs As Object
+    Dim sql As String
+    Dim lastRow As Long
+    Dim forecastedId As String
+    Dim i As Long
+    Dim dbConnectionString As String
+    
+    Set ws = ThisWorkbook.Sheets("Sheet1")
+
+    forecastedId = ws.Range("J2").Value
+    
+    If forecastedId = "" Then
+        MsgBox "Please enter a ForecastedObjectId in J2.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    
+    For i = 2 To lastRow
+        If ws.Cells(i, 1).Value = forecastedId Then
+            If Trim(ws.Cells(i, 6).Value) = "" Then
+                ws.Cells(i, 7).Value = ws.Cells(i, 5).Value
+            Else
+                ws.Cells(i, 7).Value = ws.Cells(i, 6).Value + ws.Cells(i, 3).Value
+            End If
+            
+            On Error Resume Next
+            Set conn = CreateObject("ADODB.Connection")
+            dbConnectionString = "Provider=SQLOLEDB;Data Source=YOUR_SERVER;Initial Catalog=YOUR_DATABASE;Integrated Security=SSPI;"
+            conn.Open dbConnectionString
+            
+            If conn.State = 0 Then
+                MsgBox "Database connection failed.", vbCritical, "Error"
+                Exit Sub
+            End If
+            
+            sql = "UPDATE ForecastNew SET FinalForecast = " & ws.Cells(i, 7).Value & _
+                  " WHERE ForecastedObjectId = '" & forecastedId & "'"
+            
+            conn.Execute sql
+            
+            conn.Close
+            Set conn = Nothing
+            
+            MsgBox "Final Forecast updated successfully!", vbInformation, "Success"
+            Exit Sub
+        End If
+    Next i
+
+    MsgBox "ForecastedObjectId not found in the sheet!", vbExclamation, "Not Found"
+End Sub
