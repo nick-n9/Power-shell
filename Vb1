@@ -1,0 +1,47 @@
+Sub SaveRowToSQL()
+    ' Declare variables
+    Dim conn As Object
+    Dim cmd As Object
+    Dim rowID As Integer
+    Dim sqlQuery As String
+    Dim connectionString As String
+    
+    ' Get the row ID from cell J2 (adjusted as per your request)
+    rowID = Range("J2").Value
+    
+    ' Define your SQL Server connection string (adjust for your environment)
+    connectionString = "Provider=SQLOLEDB;Data Source=YourServer;Initial Catalog=YourDatabase;Integrated Security=SSPI;"
+    
+    ' Create a new connection object
+    Set conn = CreateObject("ADODB.Connection")
+    
+    ' Open the connection
+    conn.Open connectionString
+    
+    ' Prepare the SQL query to insert the data (adjust fields and values according to your table structure)
+    ' Make sure to handle any data types appropriately, here assuming all are text, adjust if necessary.
+    sqlQuery = "INSERT INTO YourTable (Column1, Column2, Column3, Column4, ID) " & _
+               "VALUES ('" & Replace(Range("A" & rowID).Value, "'", "''") & "', " & _
+               "'" & Replace(Range("B" & rowID).Value, "'", "''") & "', " & _
+               "'" & Replace(Range("C" & rowID).Value, "'", "''") & "', " & _
+               "'" & Replace(Range("D" & rowID).Value, "'", "''") & "', " & _
+               "'" & Replace(Range("E" & rowID).Value, "'", "''") & "');"
+    
+    ' Create a command object to execute the query
+    Set cmd = CreateObject("ADODB.Command")
+    cmd.ActiveConnection = conn
+    cmd.CommandText = sqlQuery
+    
+    ' Execute the SQL query
+    cmd.Execute
+    
+    ' Close the connection
+    conn.Close
+    
+    ' Clean up
+    Set cmd = Nothing
+    Set conn = Nothing
+    
+    ' Display success message
+    MsgBox "Row saved to SQL successfully!", vbInformation
+End Sub
