@@ -1,0 +1,46 @@
+Sub CheckAndProcessData()
+    ' Declare variables
+    Dim rowID As Integer
+    Dim ws As Worksheet
+    Dim idFound As Boolean
+    Dim targetRow As Integer
+    Dim sumResult As Double
+    Dim otherColumnData As Variant
+    
+    ' Set the worksheet to the current active sheet (you can adjust if necessary)
+    Set ws = ActiveSheet
+    
+    ' Get the row ID from cell J2
+    rowID = ws.Range("J2").Value
+    
+    ' Initialize flag for checking ID match
+    idFound = False
+    
+    ' Search for the ID in Column A
+    For targetRow = 1 To ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+        If ws.Cells(targetRow, "A").Value = rowID Then
+            idFound = True
+            Exit For
+        End If
+    Next targetRow
+    
+    ' If ID found, check if H2 has data and process accordingly
+    If idFound Then
+        ' Check if H2 has data
+        If Not IsEmpty(ws.Range("H2").Value) Then
+            ' Sum the values from columns I and J and put the result in G2
+            sumResult = ws.Range("I2").Value + ws.Range("J2").Value
+            ws.Range("G2").Value = sumResult
+        Else
+            ' If H2 is empty, copy data from another column (K2) and place it in G2
+            otherColumnData = ws.Range("K2").Value
+            ws.Range("G2").Value = otherColumnData
+        End If
+    Else
+        ' If ID not found, copy data from column K and place it in G2
+        otherColumnData = ws.Range("K2").Value
+        ws.Range("G2").Value = otherColumnData
+    End If
+    
+    MsgBox "Operation complete!", vbInformation
+End Sub
