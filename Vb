@@ -9,60 +9,73 @@ Sub UpdateSQLForecast()
     Dim finalForecast As Variant
     Dim manualForecast As Variant
     Dim manualAddOn As Variant
-    
-    Set ws = ThisWorkbook.Sheets("Sheet1")
+
+    ' Set worksheet
+    Set ws = ThisWorkbook.Sheets("Sheet1") ' Change if needed
+
+    ' Get ForecastedObjectId from J2
     forecastedId = Trim(ws.Range("J2").Value)
     
+    ' Check if J2 is empty
     If forecastedId = "" Then
         MsgBox "Please enter a ForecastedObjectId in J2.", vbExclamation, "Input Required"
         Exit Sub
     End If
-    
-    lastRow = ws.Cells(Rows.Count, 1).End(xlUp).Row
 
+    ' Find last used row
+    lastRow = ws.Cells(Rows.Count, 1).End(xlUp).Row  
+
+    ' Ensure last row is valid
     If lastRow < 2 Then
         MsgBox "No valid data found in the sheet!", vbExclamation, "Error"
         Exit Sub
     End If
 
+    ' Loop through rows to find the ForecastedObjectId
     For i = 2 To lastRow
         If ws.Cells(i, 1).Value = forecastedId Then
             manualForecast = ws.Cells(i, 5).Value
             manualAddOn = ws.Cells(i, 6).Value
             finalForecast = ws.Cells(i, 7).Value
             
-            If IsEmpty(manualForecast) Then manualForecast = "NULL" Else manualForecast = "'" & Replace(manualForecast, "'", "''") & "'"
-            If IsEmpty(manualAddOn) Then manualAddOn = "NULL" Else manualAddOn = manualAddOn
-            If IsEmpty(finalForecast) Then
-                MsgBox "Final Forecast is empty for the given ForecastedObjectId!", vbExclamation, "Error"
-                Exit Sub
-            End If
-            
+            ' Open DB connection
             On Error Resume Next
             Set conn = CreateObject("ADODB.Connection")
             dbConnectionString = "Provider=SQLOLEDB;Data Source=YOUR_SERVER;Initial Catalog=YOUR_DATABASE;Integrated Security=SSPI;"
             conn.Open dbConnectionString
+            On Error GoTo 0
             
+            ' Ensure connection is open
             If conn.State = 0 Then
                 MsgBox "Database connection failed!", vbCritical, "Error"
                 Exit Sub
             End If
+
+            ' Handle NULL values
+            If IsEmpty(manualForecast) Or manualForecast = "" Then manualForecast = "NULL" Else manualForecast = "'" & Replace(manualForecast, "'", "''") & "'"
+            If IsEmpty(manualAddOn) Or manualAddOn = "" Then manualAddOn = "NULL"
+            If IsEmpty(finalForecast) Or finalForecast = "" Then
+                MsgBox "Final Forecast is empty!", vbExclamation, "Error"
+                conn.Close
+                Exit Sub
+            End If
+
+            ' SQL Update Query (Single Line)
+            sql = "UPDATE ForecastNew SET ManualForecast = " & manualForecast & ", ManualAddOn = " & manualAddOn & ", FinalForecast = '" & Replace(finalForecast, "'", "''") & "' WHERE ForecastedObjectId = '" & Replace(forecastedId, "'", "''") & "'"
             
-            sql = "UPDATE ForecastNew SET " & _
-                  "ManualForecast = " & manualForecast & ", " & _
-                  "ManualAddOn = " & manualAddOn & ", " & _
-                  "FinalForecast = " & finalForecast & " " & _
-                  "WHERE ForecastedObjectId = '" & Replace(forecastedId, "'", "''") & "'"
-            
+            ' Execute Query
             conn.Execute sql
             
+            ' Close connection
             conn.Close
             Set conn = Nothing
             
+            ' Notify user
             MsgBox "SQL Table updated successfully for ID: " & forecastedId, vbInformation, "Update Successful"
             Exit Sub
         End If
     Next i
 
-    MsgBox "ForecastedObjectId not found in the sheet!", vbExclamation, "Not Found"
+    ' If ID not found
+    MsgBox "ForecastedObjectId not found!", vbExclamation, "Not Found"
 End Sub
