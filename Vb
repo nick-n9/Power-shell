@@ -1,45 +1,68 @@
-Sub SaveRowToSQL()
-    ' Declare variables
+Sub UpdateSQLForecast()
+    Dim ws As Worksheet
     Dim conn As Object
-    Dim cmd As Object
-    Dim rowID As Integer
-    Dim sqlQuery As String
-    Dim connectionString As String
+    Dim sql As String
+    Dim forecastedId As String
+    Dim i As Long
+    Dim dbConnectionString As String
+    Dim lastRow As Long
+    Dim finalForecast As Variant
+    Dim manualForecast As Variant
+    Dim manualAddOn As Variant
     
-    ' Get the row ID from cell J1
-    rowID = Range("J1").Value
+    Set ws = ThisWorkbook.Sheets("Sheet1")
+    forecastedId = Trim(ws.Range("J2").Value)
     
-    ' Define your SQL Server connection string here (adjust for your environment)
-    connectionString = "Provider=SQLOLEDB;Data Source=YourServer;Initial Catalog=YourDatabase;Integrated Security=SSPI;"
+    If forecastedId = "" Then
+        MsgBox "Please enter a ForecastedObjectId in J2.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
     
-    ' Create a new connection object
-    Set conn = CreateObject("ADODB.Connection")
-    
-    ' Open the connection
-    conn.Open connectionString
-    
-    ' Prepare the SQL query to insert the data (adjust fields and values according to your table structure)
-    sqlQuery = "INSERT INTO YourTable (Column1, Column2, Column3, Column4, ID) " & _
-               "VALUES ('" & Range("A" & rowID).Value & "', " & _
-               "'" & Range("B" & rowID).Value & "', " & _
-               "'" & Range("C" & rowID).Value & "', " & _
-               "'" & Range("D" & rowID).Value & "', " & _
-               "'" & Range("E" & rowID).Value & "');"
-    
-    ' Create a command object to execute the query
-    Set cmd = CreateObject("ADODB.Command")
-    cmd.ActiveConnection = conn
-    cmd.CommandText = sqlQuery
-    
-    ' Execute the SQL query
-    cmd.Execute
-    
-    ' Close the connection
-    conn.Close
-    
-    ' Clean up
-    Set cmd = Nothing
-    Set conn = Nothing
-    
-    MsgBox "Row saved to SQL successfully!", vbInformation
+    lastRow = ws.Cells(Rows.Count, 1).End(xlUp).Row
+
+    If lastRow < 2 Then
+        MsgBox "No valid data found in the sheet!", vbExclamation, "Error"
+        Exit Sub
+    End If
+
+    For i = 2 To lastRow
+        If ws.Cells(i, 1).Value = forecastedId Then
+            manualForecast = ws.Cells(i, 5).Value
+            manualAddOn = ws.Cells(i, 6).Value
+            finalForecast = ws.Cells(i, 7).Value
+            
+            If IsEmpty(manualForecast) Then manualForecast = "NULL" Else manualForecast = "'" & Replace(manualForecast, "'", "''") & "'"
+            If IsEmpty(manualAddOn) Then manualAddOn = "NULL" Else manualAddOn = manualAddOn
+            If IsEmpty(finalForecast) Then
+                MsgBox "Final Forecast is empty for the given ForecastedObjectId!", vbExclamation, "Error"
+                Exit Sub
+            End If
+            
+            On Error Resume Next
+            Set conn = CreateObject("ADODB.Connection")
+            dbConnectionString = "Provider=SQLOLEDB;Data Source=YOUR_SERVER;Initial Catalog=YOUR_DATABASE;Integrated Security=SSPI;"
+            conn.Open dbConnectionString
+            
+            If conn.State = 0 Then
+                MsgBox "Database connection failed!", vbCritical, "Error"
+                Exit Sub
+            End If
+            
+            sql = "UPDATE ForecastNew SET " & _
+                  "ManualForecast = " & manualForecast & ", " & _
+                  "ManualAddOn = " & manualAddOn & ", " & _
+                  "FinalForecast = " & finalForecast & " " & _
+                  "WHERE ForecastedObjectId = '" & Replace(forecastedId, "'", "''") & "'"
+            
+            conn.Execute sql
+            
+            conn.Close
+            Set conn = Nothing
+            
+            MsgBox "SQL Table updated successfully for ID: " & forecastedId, vbInformation, "Update Successful"
+            Exit Sub
+        End If
+    Next i
+
+    MsgBox "ForecastedObjectId not found in the sheet!", vbExclamation, "Not Found"
 End Sub
