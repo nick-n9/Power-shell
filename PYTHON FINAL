@@ -1,0 +1,65 @@
+import os
+import pandas as pd
+from sqlalchemy import create_engine
+
+# Function to get SQL Server connection using SQLAlchemy (better for bulk inserts)
+def get_sql_server_connection():
+    conn_str = (
+        'mssql+pyodbc://{user}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
+    ).format(
+        user='your_username',  # Update with your SQL Server username
+        password='your_password',  # Update with your SQL Server password
+        server='your_server',  # Update with your SQL Server address
+        database='your_database'  # Update with your SQL Server database
+    )
+    engine = create_engine(conn_str)
+    return engine
+
+# Function to create a staging table with all columns as VARCHAR(255)
+def create_staging_table(df, table_name, engine):
+    # Generate the SQL for table creation with all columns as VARCHAR(255)
+    columns = ", ".join([f"[{col}] VARCHAR(255)" for col in df.columns])
+    create_table_sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns})"
+    
+    # Execute table creation
+    with engine.connect() as conn:
+        conn.execute(create_table_sql)
+
+# Function to import data from Excel file to SQL Server
+def import_excel_to_sql(file_path, engine):
+    # Read Excel file into pandas DataFrame
+    # The header is in the 3rd row (index 2), and data starts from the 4th row (index 3)
+    df = pd.read_excel(file_path, header=2, skiprows=[0, 1])  # Skip the first two rows
+    
+    # Clean up column names to avoid issues with spaces or special characters
+    df.columns = [col.replace(' ', '_').replace('/', '_') for col in df.columns]
+    
+    # Generate the table name based on the file name (e.g., 'file1.xlsx' -> 'file1')
+    table_name = os.path.splitext(os.path.basename(file_path))[0]
+    
+    # Create the staging table in SQL Server with all columns as VARCHAR(255)
+    create_staging_table(df, table_name, engine)
+    
+    # Insert data into the table in batches for efficiency
+    df.to_sql(table_name, engine, if_exists='append', index=False, method='multi')
+    print(f"Data from {file_path} imported successfully into staging table!")
+
+# Function to process all Excel files in the folder
+def process_excel_folder(folder_path):
+    # Get the list of Excel files in the folder
+    excel_files = [f for f in os.listdir(folder_path) if f.endswith('.xlsx')]
+    
+    # Get the SQL Server connection engine
+    engine = get_sql_server_connection()
+
+    # Process each Excel file in the folder
+    for file in excel_files:
+        file_path = os.path.join(folder_path, file)
+        import_excel_to_sql(file_path, engine)
+    
+    print("All files processed successfully!")
+
+# Main function to run the process
+if __name__ == "__main__":
+    folder_path = 'path_to_your_folder'  # Update this with the folder containing your Excel files
+    process_excel_folder(folder_path)
