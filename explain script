@@ -7,10 +7,10 @@ def get_sql_server_connection():
     conn_str = (
         'mssql+pyodbc://{user}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
     ).format(
-        user='your_username',  # Update with your SQL Server username
-        password='your_password',  # Update with your SQL Server password
-        server='your_server',  # Update with your SQL Server address
-        database='your_database'  # Update with your SQL Server database
+        user='sa',  # Update with your SQL Server username
+        password='MyP@ssw0rd!1234',  # Update with your SQL Server password
+        server='localhost\SQLEXPRESS',  # Update with your SQL Server address
+        database='SMT'  # Update with your SQL Server database
     )
     engine = create_engine(conn_str)
     return engine
