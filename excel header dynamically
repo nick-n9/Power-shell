@@ -1,0 +1,34 @@
+import pandas as pd
+
+def find_header_and_data_start(excel_file, sheet_name=0, max_rows_to_check=5):
+    # Load the Excel sheet
+    df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+    
+    # Examine the first few rows to determine the header
+    for row in range(max_rows_to_check):
+        # Check if this row contains potential column headers
+        if df.iloc[row].notna().all():  # Check if all columns in this row have data
+            header_row = row
+            break
+    else:
+        header_row = None
+    
+    # If no header row is found, fallback to the first row
+    if header_row is None:
+        header_row = 0
+
+    # Now, find the first row with actual data
+    data_start_row = None
+    for row in range(header_row + 1, len(df)):
+        if df.iloc[row].notna().any():  # If there’s any non-NaN value, it's a data row
+            data_start_row = row
+            break
+    
+    return header_row, data_start_row
+
+# Example usage
+excel_file = "your_file.xlsx"
+sheet_name = 0  # Sheet index or name
+header_row, data_start_row = find_header_and_data_start(excel_file, sheet_name)
+print(f"Header starts at row: {header_row + 1}")
+print(f"Data starts at row: {data_start_row + 1}")
