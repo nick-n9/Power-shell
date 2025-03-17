@@ -6,8 +6,8 @@ from sqlalchemy.engine import URL
 from sqlalchemy import text
 
 def get_sql_server_connection():
-    server= 'L10-NIMAVNIK-1\\SQLEXPRESS' 
-    database='SMT'
+    server = 'L10-NIMAVNIK-1\\SQLEXPRESS' 
+    database = 'SMT'
     driver = '{SQL Server}'
 
     connection_url = URL.create('mssql+pyodbc', query={'odbc_connect': f'DRIVER={driver};SERVER={server};DATABASE={database}'})
@@ -24,22 +24,19 @@ def create_staging_table(df, table_name, engine):
 def find_header_and_data_start(excel_file, sheet_name=0, max_rows_to_check=5):
     # Load the Excel sheet without treating any row as the header
     df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
-    
-    # Look for the header row in the first few rows
-    for row in range(max_rows_to_check):
-        if df.iloc[row].notna().all():  # Check if all columns in this row have data
-            header_row = row
-            break
+
+    # Check if the second row is completely NaN (empty row)
+    if df.iloc[1].isna().all() and df.iloc[0].notna().any():
+        # Scenario 1: The first row is some random information, header starts from row 3
+        print("Second row is all NaN, adjusting header to row 3.")
+        header_row = 2  # Header is the 3rd row (index 2)
+        data_start_row = 3  # Data starts from the 4th row (index 3)
     else:
-        header_row = 0  # Fallback if no perfect header row is found
-    
-    # Now, find the first row with actual data
-    data_start_row = None
-    for row in range(header_row + 1, len(df)):
-        if df.iloc[row].notna().any():  # If there's any non-NaN value, it's a data row
-            data_start_row = row
-            break
-    
+        # Scenario 2: The first row is the header, data starts from row 2
+        print("Second row is not NaN, assuming first row is header.")
+        header_row = 0  # Header is the 1st row (index 0)
+        data_start_row = 1  # Data starts from the 2nd row (index 1)
+
     return header_row, data_start_row
 
 def import_excel_to_sql(file_path, engine):
