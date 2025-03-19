@@ -1,68 +1,132 @@
-pip install pandas sqlalchemy pyodbc
-
-
 import os
 import pandas as pd
+import pypyodbc as odbc
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
+from sqlalchemy import text
+from datetime import datetime
 
-# Function to get SQL Server connection using SQLAlchemy (better for bulk inserts)
 def get_sql_server_connection():
-    conn_str = (
-        'mssql+pyodbc://{user}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
-    ).format(
-        user='sa',  # Update with your SQL Server username
-        password='MyP@ssw0rd!1234',  # Update with your SQL Server password
-        server='localhost\SQLEXPRESS',  # Update with your SQL Server address
-        database='SMT'  # Update with your SQL Server database
-    )
-    engine = create_engine(conn_str)
-    return engine
+    try:
+        server = 'L10-NIMAVNIK-1\\SQLEXPRESS'
+        database = 'SMT'
+        driver = '{SQL Server}'
 
-# Function to create a staging table with all columns as VARCHAR(255)
+        connection_url = URL.create(
+            'mssql+pyodbc', 
+            query={'odbc_connect': f'DRIVER={driver};SERVER={server};DATABASE={database}'}
+        )
+        engine = create_engine(connection_url, module=odbc, fast_executemany=True)
+        return engine
+    except Exception as e:
+        print(f"[ERROR] Failed to connect to SQL Server: {str(e)}")
+        raise
+
 def create_staging_table(df, table_name, engine):
-    # Generate the SQL for table creation with all columns as VARCHAR(255)
-    columns = ", ".join([f"[{col}] VARCHAR(255)" for col in df.columns])
-    create_table_sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns})"
-    
-    # Execute table creation
-    with engine.connect() as conn:
-        conn.execute(create_table_sql)
+    try:
+        columns = ", ".join([f"[{col}] VARCHAR(255)" for col in df.columns])
+        check_table_sql = f"SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{table_name}'"
+        create_table_sql = f"CREATE TABLE [{table_name}] ({columns})"
 
-# Function to import data from Excel file to SQL Server
+        with engine.connect() as conn:
+            result = conn.execute(text(check_table_sql)).fetchone()
+            if not result:
+                conn.execute(text(create_table_sql))
+    except Exception as e:
+        print(f"[ERROR] Failed to create staging table '{table_name}': {str(e)}")
+
+def log_default_sheet(file_name, sheet_name, engine):
+    """Logs only sheets with default names starting with 'Sheet'."""
+    try:
+        log_table = 'SheetLog'
+        log_data = pd.DataFrame({
+            'FileName': [file_name],
+            'SheetName': [sheet_name],
+            'Reason': ['Default sheet name found'],
+            'Timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+        })
+
+        with engine.connect() as conn:
+            if not conn.execute(text(f"SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{log_table}'")).fetchone():
+                conn.execute(text(f"""
+                CREATE TABLE [{log_table}] (
+                    [FileName] VARCHAR(255),
+                    [SheetName] VARCHAR(255),
+                    [Reason] VARCHAR(255),
+                    [Timestamp] DATETIME
+                )
+                """))
+
+        log_data.to_sql(log_table, engine, if_exists='append', index=False)
+    except Exception as e:
+        print(f"[ERROR] Failed to log default sheet '{sheet_name}' for file '{file_name}': {str(e)}")
+
+def find_header_and_data_start(excel_file, sheet_name=0):
+    try:
+        df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, engine='openpyxl')
+
+        if df.iloc[1].isna().all() and df.iloc[0].notna().any():
+            header_row = 2
+        else:
+            header_row = 0
+
+        return header_row
+    except Exception as e:
+        print(f"[ERROR] Failed to detect header for '{excel_file}' - Sheet: {sheet_name} | Error: {str(e)}")
+        raise
+
 def import_excel_to_sql(file_path, engine):
-    # Read Excel file into pandas DataFrame
-    # The header is in the 3rd row (index 2), and data starts from the 4th row (index 3)
-    df = pd.read_excel(file_path, header=2, skiprows=[0, 1])  # Skip the first two rows
-    
-    # Clean up column names to avoid issues with spaces or special characters
-    df.columns = [col.replace(' ', '_').replace('/', '_') for col in df.columns]
-    
-    # Generate the table name based on the file name (e.g., 'file1.xlsx' -> 'file1')
-    table_name = os.path.splitext(os.path.basename(file_path))[0]
-    
-    # Create the staging table in SQL Server with all columns as VARCHAR(255)
-    create_staging_table(df, table_name, engine)
-    
-    # Insert data into the table in batches for efficiency
-    df.to_sql(table_name, engine, if_exists='append', index=False, method='multi')
-    print(f"Data from {file_path} imported successfully into staging table!")
+    try:
+        excel_data = pd.ExcelFile(file_path, engine='openpyxl')
+        sheet_names = excel_data.sheet_names
 
-# Function to process all Excel files in the folder
+        with engine.connect() as conn:
+            for sheet_index, sheet_name in enumerate(sheet_names):
+                try:
+                    header_row = find_header_and_data_start(file_path, sheet_name)
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row, engine='openpyxl')
+                    df.columns = [col.replace(' ', '_').replace('/', '_') for col in df.columns]
+
+                    # Table Naming Logic
+                    if sheet_name.startswith('Sheet'):
+                        table_name = f"{os.path.splitext(os.path.basename(file_path))[0]}_{sheet_name}".replace(' ', '_')
+                        log_default_sheet(os.path.basename(file_path), sheet_name, engine)
+                    else:
+                        table_name = sheet_name.replace(' ', '_')
+
+                    create_staging_table(df, table_name, engine)
+
+                    # Disable indexes temporarily for faster inserts
+                    conn.execute(text(f"ALTER INDEX ALL ON [{table_name}] DISABLE"))
+
+                    # Optimized Bulk Insertion
+                    chunk_size = 10000  # Larger chunk size for optimal performance
+                    df.to_sql(table_name, conn, if_exists='append', index=False, method='multi', chunksize=chunk_size)
+
+                    # Rebuild indexes after data insertion
+                    conn.execute(text(f"ALTER INDEX ALL ON [{table_name}] REBUILD"))
+
+                    print(f"Data from {sheet_name} in {file_path} imported successfully into {table_name}!")
+                
+                except Exception as e:
+                    print(f"[ERROR] Failed to process sheet '{sheet_name}' in file '{file_path}' | Error: {str(e)}")
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to process file '{file_path}' | Error: {str(e)}")
+
 def process_excel_folder(folder_path):
-    # Get the list of Excel files in the folder
-    excel_files = [f for f in os.listdir(folder_path) if f.endswith('.xlsx')]
-    
-    # Get the SQL Server connection engine
-    engine = get_sql_server_connection()
+    try:
+        excel_files = [f for f in os.listdir(folder_path) if f.endswith('.xlsx')]
+        engine = get_sql_server_connection()
 
-    # Process each Excel file in the folder
-    for file in excel_files:
-        file_path = os.path.join(folder_path, file)
-        import_excel_to_sql(file_path, engine)
-    
-    print("All files processed successfully!")
+        for file in excel_files:
+            file_path = os.path.join(folder_path, file)
+            import_excel_to_sql(file_path, engine)
+        
+        print("All files processed successfully!")
+    except Exception as e:
+        print(f"[ERROR] Folder processing failed: {str(e)}")
 
-# Main function to run the process
 if __name__ == "__main__":
-    folder_path = 'path_to_your_folder'  # Update this with the folder containing your Excel files
+    folder_path = r'C:\Users\nimavnik\Documents\Peritotask\ROIMA\ROIMA'
     process_excel_folder(folder_path)
