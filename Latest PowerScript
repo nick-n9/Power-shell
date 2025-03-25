@@ -1,0 +1,139 @@
+# PowerShell Script to Import Excel Data into SQL Server
+#Microsoft.ACE.OLEDB or Excel.Application must be installed for Excel manipulation.
+# SQL Server Connection Configuration
+$server = "L10-NIMAVNIK-1\SQLEXPRESS"
+$database = "SMT"
+$connectionString = "Server=$server;Database=$database;Integrated Security=True"
+
+# Function to Execute SQL Queries
+function Execute-SqlQuery {
+    param (
+        [string]$query
+    )
+    try {
+        $connection = New-Object System.Data.SqlClient.SqlConnection
+        $connection.ConnectionString = $connectionString
+        $connection.Open()
+
+        $command = $connection.CreateCommand()
+        $command.CommandText = $query
+        $command.ExecuteNonQuery()
+
+        $connection.Close()
+    } catch {
+        Write-Host "[ERROR] SQL Query Execution Failed: $_"
+    }
+}
+
+# Function to Check and Create Table
+function Create-StagingTable {
+    param (
+        [string]$tableName,
+        [System.Data.DataTable]$dataTable
+    )
+    $checkTableQuery = "IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '$tableName')
+                        CREATE TABLE [$tableName] (" +
+                        ($dataTable.Columns | ForEach-Object { "[$($_.ColumnName)] NVARCHAR(255)" }) -join ", " + ")"
+
+    Execute-SqlQuery -query $checkTableQuery
+}
+
+# Function to Log Default Sheet Names
+function Log-DefaultSheet {
+    param (
+        [string]$fileName,
+        [string]$sheetName
+    )
+    $logTable = "SheetLog"
+    $logCheckQuery = "IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '$logTable')
+                      CREATE TABLE [$logTable] (FileName NVARCHAR(255), SheetName NVARCHAR(255), Reason NVARCHAR(255), Timestamp DATETIME)"
+
+    Execute-SqlQuery -query $logCheckQuery
+
+    $logInsertQuery = "INSERT INTO [$logTable] (FileName, SheetName, Reason, Timestamp) 
+                       VALUES ('$fileName', '$sheetName', 'Default sheet name found', GETDATE())"
+    
+    Execute-SqlQuery -query $logInsertQuery
+}
+
+# Function to Read Excel File and Import to SQL
+function Import-ExcelToSql {
+    param (
+        [string]$filePath
+    )
+    try {
+        $excel = New-Object -ComObject Excel.Application
+        $excel.Visible = $false
+        $workbook = $excel.Workbooks.Open($filePath)
+
+        foreach ($sheet in $workbook.Sheets) {
+            $sheetName = $sheet.Name
+
+            # Read data from Excel Sheet
+            $range = $sheet.UsedRange
+            $rowCount = $range.Rows.Count
+            $colCount = $range.Columns.Count
+
+            $tableName = if ($sheetName -match "^Sheet") {
+                (Get-Item $filePath).BaseName + "_" + $sheetName -replace " ", "_"
+            } else {
+                $sheetName -replace " ", "_"
+            }
+
+            if ($sheetName -match "^Sheet") {
+                Log-DefaultSheet -fileName (Get-Item $filePath).Name -sheetName $sheetName
+            }
+
+            # Convert Excel data to DataTable
+            $dataTable = New-Object System.Data.DataTable
+            for ($col = 1; $col -le $colCount; $col++) {
+                $columnName = $range.Cells.Item(1, $col).Text -replace " ", "_"
+                $dataTable.Columns.Add($columnName) | Out-Null
+            }
+
+            for ($row = 2; $row -le $rowCount; $row++) {
+                $dataRow = $dataTable.NewRow()
+                for ($col = 1; $col -le $colCount; $col++) {
+                    $dataRow[$col - 1] = $range.Cells.Item($row, $col).Text
+                }
+                $dataTable.Rows.Add($dataRow)
+            }
+
+            Create-StagingTable -tableName $tableName -dataTable $dataTable
+
+            # Insert Data into SQL Server
+            $bulkCopy = New-Object Data.SqlClient.SqlBulkCopy($connectionString)
+            $bulkCopy.DestinationTableName = $tableName
+            $bulkCopy.WriteToServer($dataTable)
+
+            Write-Host "Data from $sheetName in $filePath imported successfully into $tableName!"
+        }
+
+        $workbook.Close($false)
+        $excel.Quit()
+    } catch {
+        Write-Host "[ERROR] Failed to process file '$filePath': $_"
+    }
+}
+
+# Function to Process Folder and Import All Excel Files
+function Process-ExcelFolder {
+    param (
+        [string]$folderPath
+    )
+    try {
+        $excelFiles = Get-ChildItem -Path $folderPath -Filter "*.xlsx"
+        
+        foreach ($file in $excelFiles) {
+            Import-ExcelToSql -filePath $file.FullName
+        }
+
+        Write-Host "All files processed successfully!"
+    } catch {
+        Write-Host "[ERROR] Folder processing failed: $_"
+    }
+}
+
+# Main Execution
+$folderPath = "C:\Users\nimavnik\Documents\Peritotask\ROIMA\ROIMA"
+Process-ExcelFolder -folderPath $folderPath
