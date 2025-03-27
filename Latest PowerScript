@@ -1,12 +1,13 @@
-# PowerShell Script to Import CSV, TXT, and Excel Data into SQL Server with Chunking
+# PowerShell Script to Import Excel Data into SQL Server with Optimized Bulk Insert
+Add-Type -AssemblyName System.Data
 
 # SQL Server Connection Configuration
 $server = "L10-NIMAVNIK-1\SQLEXPRESS"
 $database = "SMT"
 $connectionString = "Server=$server;Database=$database;Integrated Security=True"
 
-# Chunk Size (Modify This Variable for Performance Testing)
-$chunkSize = 5000  # Adjust this value as needed
+# Chunk Size (Modify This for Performance Testing)
+$chunkSize = 10000  # Adjust as needed
 
 # Function to Execute SQL Queries
 function Execute-SqlQuery {
@@ -26,72 +27,31 @@ function Execute-SqlQuery {
     }
 }
 
-# Function to Generate a Valid SQL Table Name
-function Get-SafeTableName {
-    param ([string]$name)
-    return ($name -replace "[^a-zA-Z0-9_]", "_") # Replace special characters with underscores
-}
-
-# Function to Create a Staging Table with NVARCHAR(MAX) Columns
+# Function to Create Staging Table with NVARCHAR(MAX) Columns
 function Create-StagingTable {
     param (
         [string]$tableName,
         [System.Data.DataTable]$dataTable
     )
-    $safeTableName = Get-SafeTableName -name $tableName
-    $columnsDefinition = ($dataTable.Columns | ForEach-Object { "[$($_.ColumnName)] NVARCHAR(MAX)" }) -join ", "
 
-    $checkTableQuery = "IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '$safeTableName')
-                        CREATE TABLE [$safeTableName] ($columnsDefinition)"
-    
-    Execute-SqlQuery -query $checkTableQuery
-}
-
-# Function to Import CSV and TXT Files into SQL Server in Chunks
-function Import-CSVorTXTToSql {
-    param (
-        [string]$filePath
-    )
-    try {
-        $fileName = (Get-Item $filePath).BaseName
-        $tableName = Get-SafeTableName -name $fileName
-
-        # Read file contents
-        $data = Import-Csv -Path $filePath -Delimiter ','
-
-        # Create table structure dynamically
-        if ($data.Count -gt 0) {
-            $dataTable = New-Object System.Data.DataTable
-            $data.PSObject.Properties.Name | ForEach-Object {
-                $columnName = Get-SafeTableName -name $_
-                $dataTable.Columns.Add($columnName) | Out-Null
-            }
-            Create-StagingTable -tableName $tableName -dataTable $dataTable
-
-            # Process in Chunks
-            for ($i = 0; $i -lt $data.Count; $i += $chunkSize) {
-                $chunk = $data[$i..([math]::Min($i + $chunkSize - 1, $data.Count - 1))]
-                $chunkTable = $dataTable.Clone()
-                foreach ($row in $chunk) {
-                    $dataRow = $chunkTable.NewRow()
-                    $data.PSObject.Properties.Name | ForEach-Object {
-                        $columnName = Get-SafeTableName -name $_
-                        $dataRow[$columnName] = $row.$_
-                    }
-                    $chunkTable.Rows.Add($dataRow)
-                }
-
-                # Bulk Insert into SQL Server
-                $bulkCopy = New-Object Data.SqlClient.SqlBulkCopy($connectionString)
-                $bulkCopy.DestinationTableName = $tableName
-                $bulkCopy.WriteToServer($chunkTable)
-            }
+    $validColumns = @()
+    foreach ($col in $dataTable.Columns) {
+        $colName = $col.ColumnName.Trim()
+        if ($colName -eq "") {
+            Write-Host "[ERROR] Blank column name detected! Skipping table creation."
+            return
         }
-
-        Write-Host "Data from $filePath imported successfully into $tableName!"
-    } catch {
-        Write-Host "[ERROR] Failed to process CSV/TXT file '$filePath': $_"
+        $validColumns += "[$colName] NVARCHAR(MAX)"
     }
+
+    $columnsDefinition = $validColumns -join ", "
+
+    $createTableQuery = @"
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '$tableName')
+    CREATE TABLE [$tableName] ($columnsDefinition);
+"@
+
+    Execute-SqlQuery -query $createTableQuery
 }
 
 # Function to Import Excel Data into SQL Server in Chunks
@@ -108,7 +68,7 @@ function Import-ExcelToSql {
         foreach ($sheet in $workbook.Sheets) {
             $sheetName = $sheet.Name
             $tableName = if ($sheetName -match "^Sheet") { "${fileName}_$sheetName" } else { $sheetName }
-            $tableName = Get-SafeTableName -name $tableName
+            $tableName = "[$tableName]"  # Always use square brackets to avoid SQL keyword conflicts
 
             # Read data from Excel Sheet
             $range = $sheet.UsedRange
@@ -118,66 +78,73 @@ function Import-ExcelToSql {
             # Convert Excel data to DataTable
             $dataTable = New-Object System.Data.DataTable
             for ($col = 1; $col -le $colCount; $col++) {
-                $columnName = Get-SafeTableName -name ($range.Cells.Item(1, $col).Text)
+                $columnName = $range.Cells.Item(1, $col).Text.Trim() -replace '\s+', '_'
+                if ($columnName -eq "") { $columnName = "Column$col" }  # Assign generic name to empty columns
                 $dataTable.Columns.Add($columnName) | Out-Null
             }
 
             # Read Data into DataTable
-            $dataRows = @()
             for ($row = 2; $row -le $rowCount; $row++) {
-                $dataRow = @{}
+                $dataRow = $dataTable.NewRow()
                 for ($col = 1; $col -le $colCount; $col++) {
-                    $columnName = Get-SafeTableName -name ($range.Cells.Item(1, $col).Text)
+                    $columnName = $dataTable.Columns[$col - 1].ColumnName
                     $dataRow[$columnName] = $range.Cells.Item($row, $col).Text
                 }
-                $dataRows += $dataRow
+                $dataTable.Rows.Add($dataRow)
             }
 
+            # Create Staging Table
             Create-StagingTable -tableName $tableName -dataTable $dataTable
 
-            # Process in Chunks
-            for ($i = 0; $i -lt $dataRows.Count; $i += $chunkSize) {
-                $chunk = $dataRows[$i..([math]::Min($i + $chunkSize - 1, $dataRows.Count - 1))]
-                $chunkTable = $dataTable.Clone()
+            # Optimized Bulk Insert
+            $bulkCopy = New-Object Data.SqlClient.SqlBulkCopy($connectionString)
+            $bulkCopy.DestinationTableName = $tableName  # Ensure table name is correctly referenced
+            $bulkCopy.BatchSize = $chunkSize
+            $bulkCopy.BulkCopyTimeout = 600
 
-                foreach ($row in $chunk) {
-                    $dataRow = $chunkTable.NewRow()
-                    foreach ($column in $row.Keys) {
-                        $dataRow[$column] = $row[$column]
-                    }
-                    $chunkTable.Rows.Add($dataRow)
+            # Add Column Mappings
+            foreach ($column in $dataTable.Columns) {
+                $bulkCopy.ColumnMappings.Add($column.ColumnName, $column.ColumnName) | Out-Null
+            }
+
+            # Insert Data in Chunks
+            for ($i = 0; $i -lt $dataTable.Rows.Count; $i += $chunkSize) {
+                $chunk = $dataTable.Clone()
+                for ($j = 0; $j -lt $chunkSize -and ($i + $j) -lt $dataTable.Rows.Count; $j++) {
+                    $chunk.ImportRow($dataTable.Rows[$i + $j])
                 }
-
-                # Bulk Insert into SQL Server
-                $bulkCopy = New-Object Data.SqlClient.SqlBulkCopy($connectionString)
-                $bulkCopy.DestinationTableName = $tableName
-                $bulkCopy.WriteToServer($chunkTable)
+                $bulkCopy.WriteToServer($chunk)
             }
 
             Write-Host "Data from $sheetName in $filePath imported successfully into $tableName!"
         }
 
+        # Properly Close and Release Excel COM Object
         $workbook.Close($false)
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
         $excel.Quit()
+
+        # Allow time for Excel to fully close
+        Start-Sleep -Seconds 1
+
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
     } catch {
         Write-Host "[ERROR] Failed to process Excel file '$filePath': $_"
     }
 }
 
-# Function to Process Folder and Import All Files
+# Function to Process Folder and Import All Excel Files
 function Process-Folder {
     param (
         [string]$folderPath
     )
     try {
-        $files = Get-ChildItem -Path $folderPath -File | Where-Object { $_.Extension -in @(".csv", ".txt", ".xlsx") }
+        $files = Get-ChildItem -Path $folderPath -File | Where-Object { $_.Extension -eq ".xlsx" }
 
         foreach ($file in $files) {
-            if ($file.Extension -eq ".xlsx") {
-                Import-ExcelToSql -filePath $file.FullName
-            } else {
-                Import-CSVorTXTToSql -filePath $file.FullName
-            }
+            Import-ExcelToSql -filePath $file.FullName
         }
 
         Write-Host "All files processed successfully!"
