@@ -27,7 +27,7 @@ function Execute-SqlQuery {
     }
 }
 
-# Function to Create Staging Table with NVARCHAR(MAX) Columns
+# Function to Create Staging Table with VARCHAR(MAX) Columns
 function Create-StagingTable {
     param (
         [string]$tableName,
@@ -36,19 +36,21 @@ function Create-StagingTable {
 
     $validColumns = @()
     foreach ($col in $dataTable.Columns) {
-        $colName = $col.ColumnName.Trim()
+        $colName = $col.ColumnName.Trim() -replace '[^\w]', '_'
         if ($colName -eq "") {
             Write-Host "[ERROR] Blank column name detected! Skipping table creation."
             return
         }
-        $validColumns += "[$colName] NVARCHAR(MAX)"
+        $validColumns += "[$colName] VARCHAR(MAX)"
     }
 
     $columnsDefinition = $validColumns -join ", "
 
     $createTableQuery = @"
     IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '$tableName')
-    CREATE TABLE [$tableName] ($columnsDefinition);
+    BEGIN
+        CREATE TABLE [$tableName] ($columnsDefinition);
+    END
 "@
 
     Execute-SqlQuery -query $createTableQuery
@@ -78,7 +80,7 @@ function Import-ExcelToSql {
             # Convert Excel data to DataTable
             $dataTable = New-Object System.Data.DataTable
             for ($col = 1; $col -le $colCount; $col++) {
-                $columnName = $range.Cells.Item(1, $col).Text.Trim() -replace '\s+', '_'
+                $columnName = $range.Cells.Item(1, $col).Text.Trim() -replace '[^\w]', '_'
                 if ($columnName -eq "") { $columnName = "Column$col" }  # Assign generic name to empty columns
                 $dataTable.Columns.Add($columnName) | Out-Null
             }
@@ -95,6 +97,9 @@ function Import-ExcelToSql {
 
             # Create Staging Table
             Create-StagingTable -tableName $tableName -dataTable $dataTable
+
+            # Ensure Table is Accessible Before Insertion
+            Start-Sleep -Milliseconds 500  
 
             # Optimized Bulk Insert
             $bulkCopy = New-Object Data.SqlClient.SqlBulkCopy($connectionString)
