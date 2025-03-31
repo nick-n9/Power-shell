@@ -28,7 +28,9 @@ for file in output_dir.iterdir():
 # Connect to IMAP Server
 mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
 mail.login(EMAIL_USER, EMAIL_PASS)
-mail.select("Inbox")  # Select the inbox
+
+# Select the correct folder (Support/Inbox)
+mail.select("Support/Inbox")
 
 # Get today's date in the format IMAP expects
 today = datetime.today().strftime("%d-%b-%Y")
