@@ -1,0 +1,72 @@
+import imaplib
+import email
+from email.header import decode_header
+from pathlib import Path
+from datetime import datetime
+import os
+
+# IMAP Server Details
+IMAP_SERVER = "outlook.office365.com"
+IMAP_PORT = 993
+EMAIL_USER = "your_email@outlook.com"  # Your Outlook email
+EMAIL_PASS = "your_app_password"  # Use an app password if 2FA is enabled
+
+# Email Filtering
+EXPECTED_SUBJECT = "Intern Test: VS: SallingGroup: Order forecast"
+EXPECTED_SENDER = "client@example.com"
+ALLOWED_EXTENSIONS = [".csv"]  # Allowed file types
+
+# Output Folder
+output_dir = Path(r"C:\Users\nimavnik\Documents\Peritotask\BO\DailyCustomerForecast")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+# Delete existing files before saving new ones
+for file in output_dir.iterdir():
+    if file.is_file():
+        file.unlink()
+
+# Connect to IMAP Server
+mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+mail.login(EMAIL_USER, EMAIL_PASS)
+mail.select("Inbox")  # Select the inbox
+
+# Get today's date in the format IMAP expects
+today = datetime.today().strftime("%d-%b-%Y")
+
+# Search for emails from the expected sender with the expected subject
+search_criteria = f'(FROM "{EXPECTED_SENDER}" SUBJECT "{EXPECTED_SUBJECT}" SINCE "{today}")'
+status, messages = mail.search(None, search_criteria)
+
+if status == "OK":
+    for num in messages[0].split():
+        # Fetch the email
+        _, msg_data = mail.fetch(num, "(RFC822)")
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                # Parse email content
+                msg = email.message_from_bytes(response_part[1])
+
+                # Process attachments
+                for part in msg.walk():
+                    if part.get_content_disposition() == "attachment":
+                        filename = part.get_filename()
+
+                        if filename:
+                            # Decode filename if needed
+                            filename = decode_header(filename)[0][0]
+                            if isinstance(filename, bytes):
+                                filename = filename.decode()
+
+                            # Check file extension
+                            file_extension = Path(filename).suffix.lower()
+                            if file_extension in ALLOWED_EXTENSIONS:
+                                file_path = output_dir / filename  # No date appended
+
+                                # Save attachment
+                                with open(file_path, "wb") as f:
+                                    f.write(part.get_payload(decode=True))
+
+                                print(f"Saved: {file_path}")
+
+# Close the connection
+mail.logout()
